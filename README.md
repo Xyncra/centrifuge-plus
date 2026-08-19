@@ -188,7 +188,7 @@ func (d *DualBroker) PublishWithOffset(ctx context.Context, ch string, data []by
 
 ```go
 type HistoryStore interface {
-    Query(channel string, sinceOffset uint64) ([]*centrifuge.Publication, error)
+    Query(ctx context.Context, channel string, sinceOffset uint32, latestOffset uint32) ([]*centrifuge.Publication, error)
 }
 ```
 
@@ -288,11 +288,3 @@ centrifuge-plus/
 │   └── publish_with_offset.lua  # 使用预分配 offset 发布
 └── example/                 # 完整示例程序
 ```
-
-## 文档
-
-| 文档 | 内容 |
-| ---- | ---- |
-| [Requirements.md](Requirements.md) | 需求文档（v2.0） |
-| [Plan.md](Plan.md) | 实现计划（v2.0） |
-| [DRAFT.md](DRAFT.md) | 改造草案（已实施） |
