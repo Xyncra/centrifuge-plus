@@ -178,8 +178,8 @@ jobs:
           sleep 30
           if ps -p $EXAMPLE_PID > /dev/null; then
             echo "Example running successfully"
-            kill $EXAMPLE_PID
-            wait $EXAMPLE_PID
+            kill $EXAMPLE_PID || true
+            wait $EXAMPLE_PID 2>/dev/null || true
           else
             echo "Example failed to start"
             exit 1
