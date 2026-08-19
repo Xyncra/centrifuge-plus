@@ -221,7 +221,7 @@ type TracingConfig struct {
 
 ### 跨边界传播
 
-PUB/SUB 消息尾缀携带 W3C traceparent：`__p1:{offset}:{epoch}__{data}__tp:{traceparent}`
+PUB/SUB 消息尾缀携带 W3C traceparent：`__p1:{offset}:{epoch}:{data_len}__{data}[__tp:{traceparent}]`
 
 ### 所有 Span 类型
 
