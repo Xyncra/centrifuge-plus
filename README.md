@@ -113,7 +113,10 @@ func handleSendMessage(ctx context.Context, broker *centrifugeplus.DualBroker,
         Channel string `json:"channel"`
         Data    string `json:"data"`
     }
-    json.Unmarshal(e.Data, &req)
+    if err := json.Unmarshal(e.Data, &req); err != nil {
+        cb(centrifuge.RPCReply{}, err)
+        return
+    }
 
     // Step 1: 预分配 offset（原子 HINCRBY）
     positions, err := broker.BatchIncrby(ctx, []centrifugeplus.ChannelIncrbyRequest{
@@ -285,3 +288,11 @@ centrifuge-plus/
 │   └── publish_with_offset.lua  # 使用预分配 offset 发布
 └── example/                 # 完整示例程序
 ```
+
+## 文档
+
+| 文档 | 内容 |
+| ---- | ---- |
+| [Requirements.md](Requirements.md) | 需求文档（v2.0） |
+| [Plan.md](Plan.md) | 实现计划（v2.0） |
+| [DRAFT.md](DRAFT.md) | 改造草案（已实施） |
