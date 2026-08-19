@@ -26,8 +26,14 @@ import (
 )
 
 func initTracer(ctx context.Context) (*sdktrace.TracerProvider, error) {
+	// 支持通过环境变量配置 Jaeger 端点
+	jaegerEndpoint := os.Getenv("JAEGER_ENDPOINT")
+	if jaegerEndpoint == "" {
+		jaegerEndpoint = "localhost:4317"
+	}
+
 	exporter, err := otlptrace.New(ctx, otlptracegrpc.NewClient(
-		otlptracegrpc.WithEndpoint("localhost:4317"),
+		otlptracegrpc.WithEndpoint(jaegerEndpoint),
 		otlptracegrpc.WithInsecure(),
 	))
 	if err != nil {
