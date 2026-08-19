@@ -17,8 +17,6 @@ linters:
     - gosec
 
 linters-settings:
-  govet:
-    shadow: true
   gocyclo:
     min-complexity: 15
   misspell:
