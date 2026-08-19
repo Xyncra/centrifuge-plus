@@ -95,17 +95,17 @@ BatchIncrby → DB 事务写入 → PublishWithOffset
 ```go
 // === 服务端 RPC handler（正确处理 Topic 消息）===
 
-// 客户端通过 RPC 方法（如 "send.message"）发送消息
+// 客户端通过 RPC 方法（如 "send.topic"）发送消息
 client.OnRPC(func(e centrifuge.RPCEvent, cb centrifuge.RPCCallback) {
     switch e.Method {
-    case "send.message":
-        handleSendMessage(ctx, broker, historyStore, client, e, cb)
+    case "send.topic":
+        handleSendTopic(ctx, broker, historyStore, client, e, cb)
     default:
         cb(centrifuge.RPCReply{}, centrifuge.ErrorMethodNotFound)
     }
 })
 
-func handleSendMessage(ctx context.Context, broker *centrifugeplus.DualBroker,
+func handleSendTopic(ctx context.Context, broker *centrifugeplus.DualBroker,
     historyStore HistoryStore, client *centrifuge.Client,
     e centrifuge.RPCEvent, cb centrifuge.RPCCallback) {
 

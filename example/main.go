@@ -647,7 +647,10 @@ func newMemoryHistoryStore() *memoryHistoryStore {
 	}
 }
 
-func (s *memoryHistoryStore) Query(_ context.Context, channel string, sinceOffset uint32, _ uint32) ([]*centrifuge.Publication, error) {
+func (s *memoryHistoryStore) Query(_ context.Context, channel string, sinceOffset uint32, latestOffset uint32) ([]*centrifuge.Publication, error) {
+	// latestOffset 在生产环境中用于补齐尾部缺口（fillGapPublications），
+	// 保证恢复结果满足 centrifuge 的连续性检查（末条 pub.Offset == latestOffset）。
+	// 示例程序是简化实现，未使用该参数。
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	pubs := s.data[channel]
