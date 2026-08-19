@@ -88,36 +88,64 @@ BatchIncrby → DB 事务写入 → PublishWithOffset
 
 ### 接入流程
 
+> **重要**：Topic 消息应通过**服务端 RPC handler**发送，而非客户端 centrifuge publish。
+> 客户端通过 RPC 请求发送消息，服务端 handler 执行 BatchIncrby → DB 事务 → PublishWithOffset。
+> 不要使用 `OnPublish` 回调实现"先落盘再推送"—— centrifuge 在 `OnPublish` 后还会调用 `Broker.Publish()`，导致重复发布。
+
 ```go
-// Step 1: 预分配 offset（原子批量 HINCRBY）
-positions, err := broker.BatchIncrby(ctx, []centrifugeplus.ChannelIncrbyRequest{
-    {Channel: "u=user1"},
-    {Channel: "u=user2"},
+// === 服务端 RPC handler（正确处理 Topic 消息）===
+
+// 客户端通过 RPC 方法（如 "send.message"）发送消息
+client.OnRPC(func(e centrifuge.RPCEvent, cb centrifuge.RPCCallback) {
+    switch e.Method {
+    case "send.message":
+        handleSendMessage(ctx, broker, historyStore, client, e, cb)
+    default:
+        cb(centrifuge.RPCReply{}, centrifuge.ErrorMethodNotFound)
+    }
 })
-if err != nil {
-    return fmt.Errorf("预分配 offset 失败: %w", err)
-}
 
-// Step 2: DB 事务（接入方自行实现）
-if err := db.Transaction(func(tx *gorm.DB) error {
-    if err := tx.Create(&message).Error; err != nil {
-        return err
-    }
-    if err := tx.Create(&UserUpdate{UserID: "user1", Offset: positions["u=user1"].Offset}).Error; err != nil {
-        return err
-    }
-    if err := tx.Create(&UserUpdate{UserID: "user2", Offset: positions["u=user2"].Offset}).Error; err != nil {
-        return err
-    }
-    return nil
-}); err != nil {
-    // DB 失败：offset 产生 gap，客户端跳过该 offset 继续拉取
-    return fmt.Errorf("DB 事务失败: %w", err)
-}
+func handleSendMessage(ctx context.Context, broker *centrifugeplus.DualBroker,
+    historyStore HistoryStore, client *centrifuge.Client,
+    e centrifuge.RPCEvent, cb centrifuge.RPCCallback) {
 
-// Step 3: 事务后推送（尽力而为，失败不影响数据一致性）
-broker.PublishWithOffset(ctx, "u=user1", data, opts, positions["u=user1"])
-broker.PublishWithOffset(ctx, "u=user2", data, opts, positions["u=user2"])
+    var req struct {
+        Channel string `json:"channel"`
+        Data    string `json:"data"`
+    }
+    json.Unmarshal(e.Data, &req)
+
+    // Step 1: 预分配 offset（原子 HINCRBY）
+    positions, err := broker.BatchIncrby(ctx, []centrifugeplus.ChannelIncrbyRequest{
+        {Channel: req.Channel},
+    })
+    if err != nil {
+        cb(centrifuge.RPCReply{}, err)
+        return
+    }
+    sp := positions[req.Channel]
+
+    // Step 2: DB 事务（接入方自行实现）
+    //   db.Begin() → Create(message) → Create(user_updates) → Commit()
+    //   如果事务失败，预分配的 offset 产生 gap，客户端跳过该 offset 继续拉取
+    if err := db.Transaction(func(tx *gorm.DB) error {
+        if err := tx.Create(&Message{Channel: req.Channel, Data: req.Data, Offset: sp.Offset}).Error; err != nil {
+            return err
+        }
+        if err := tx.Create(&UserUpdate{UserID: client.UserID(), Offset: sp.Offset}).Error; err != nil {
+            return err
+        }
+        return nil
+    }); err != nil {
+        cb(centrifuge.RPCReply{}, err)
+        return
+    }
+
+    // Step 3: 事务后推送（best-effort，失败不影响数据一致性）
+    broker.PublishWithOffset(ctx, req.Channel, []byte(req.Data), centrifuge.PublishOptions{}, sp)
+
+    cb(centrifuge.RPCReply{Data: []byte(fmt.Sprintf(`{"offset":%d}`, sp.Offset))}, nil)
+}
 ```
 
 ### TopicBroker
@@ -257,11 +285,3 @@ centrifuge-plus/
 │   └── publish_with_offset.lua  # 使用预分配 offset 发布
 └── example/                 # 完整示例程序
 ```
-
-## 文档
-
-| 文档 | 内容 |
-| ---- | ---- |
-| [Requirements.md](Requirements.md) | 需求文档（v2.0） |
-| [Plan.md](Plan.md) | 实现计划（v2.0） |
-| [DRAFT.md](DRAFT.md) | 改造草案（已实施） |

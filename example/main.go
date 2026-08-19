@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -26,7 +27,6 @@ import (
 )
 
 func initTracer(ctx context.Context) (*sdktrace.TracerProvider, error) {
-	// 支持通过环境变量配置 Jaeger 端点
 	jaegerEndpoint := os.Getenv("JAEGER_ENDPOINT")
 	if jaegerEndpoint == "" {
 		jaegerEndpoint = "localhost:4317"
@@ -59,6 +59,7 @@ func initTracer(ctx context.Context) (*sdktrace.TracerProvider, error) {
 
 func main() {
 	log.Println("=== centrifuge-plus Example ===")
+	log.Println("使用方式：客户端通过 RPC 发送消息，服务端执行 BatchIncrby → 持久化 → PublishWithOffset")
 
 	overallPass := true
 	defer func() {
@@ -122,11 +123,13 @@ func main() {
 
 	node.SetBroker(broker)
 
+	// 预注册频道类型
 	for _, ch := range []string{"group-1", "channel-1", "channel-2"} {
 		broker.RegisterChannelType("topic:"+ch, centrifugeplus.Topic)
 		broker.RegisterChannelType("live:"+ch, centrifugeplus.Live)
 	}
 
+	// 认证：使用 client ID 作为 user ID
 	node.OnConnecting(func(ctx context.Context, e centrifuge.ConnectEvent) (centrifuge.ConnectReply, error) {
 		userID := e.Token
 		if userID == "" {
@@ -138,6 +141,7 @@ func main() {
 	})
 
 	node.OnConnect(func(client *centrifuge.Client) {
+		// OnSubscribe: 注册 channel type + 开启 recovery
 		client.OnSubscribe(func(e centrifuge.SubscribeEvent, cb centrifuge.SubscribeCallback) {
 			ch := e.Channel
 			if strings.HasPrefix(ch, "topic:") {
@@ -148,70 +152,22 @@ func main() {
 					},
 				}, nil)
 				return
-			} else if strings.HasPrefix(ch, "live:") {
+			}
+			if strings.HasPrefix(ch, "live:") {
 				broker.RegisterChannelType(ch, centrifugeplus.Live)
 			}
 			cb(centrifuge.SubscribeReply{}, nil)
 		})
-		client.OnPublish(func(e centrifuge.PublishEvent, cb centrifuge.PublishCallback) {
-			if strings.HasPrefix(e.Channel, "topic:") {
-				// "Persist first, then push" model:
-				// 1. Pre-allocate offset
-				// 2. Save to DB (in memoryHistoryStore for this example)
-				// 3. Publish with pre-allocated offset (best-effort)
-				// cb() is called only after persistence succeeds.
-				workerTracer := tp.Tracer("example-persist")
-				ctx, span := workerTracer.Start(context.Background(), "example.persist_and_push",
-					trace.WithAttributes(attribute.String("channel", e.Channel)),
-				)
-				defer span.End()
 
-				// Step 1: BatchIncrby
-				positions, err := broker.BatchIncrby(ctx, []centrifugeplus.ChannelIncrbyRequest{{Channel: e.Channel}})
-				if err != nil {
-					log.Printf("[persist] BatchIncrby error: %v", err)
-					span.SetStatus(codes.Error, err.Error())
-					span.RecordError(err)
-					cb(centrifuge.PublishReply{}, err)
-					return
-				}
-				sp := positions[e.Channel]
-				span.SetAttributes(
-					attribute.Int64("offset", int64(sp.Offset)),
-					attribute.String("epoch", sp.Epoch),
-				)
-
-				// Step 2: Save to DB (simulated with memoryHistoryStore)
-				// In a real IM server, this would be a DB transaction:
-				//   db.Begin() → Create(message) → Create(user_updates) → Commit()
-				// If the transaction fails, the pre-allocated offset is wasted (gap).
-				pub := &centrifuge.Publication{Data: e.Data}
-				historyStore.SaveWithOffset(e.Channel, pub, uint32(sp.Offset))
-				log.Printf("[persist] Saved channel=%s offset=%d", e.Channel, sp.Offset)
-
-				// Step 3: PublishWithOffset (best-effort push, failure doesn't affect data consistency)
-				if err := broker.PublishWithOffset(ctx, e.Channel, e.Data, centrifuge.PublishOptions{
-					HistorySize: 100,
-					HistoryTTL:  24 * time.Hour,
-				}, sp); err != nil {
-					log.Printf("[persist] PublishWithOffset error: %v", err)
-					span.SetStatus(codes.Error, err.Error())
-					span.RecordError(err)
-					// Push failed but data is persisted. Client will discover via DB pull.
-					// Still return success to cb — the publish is "done" from centrifuge's perspective.
-				} else {
-					span.SetStatus(codes.Ok, "")
-				}
-
-				cb(centrifuge.PublishReply{
-					Options: centrifuge.PublishOptions{
-						HistorySize: 100,
-						HistoryTTL:  24 * time.Hour,
-					},
-				}, nil)
-				return
+		// OnRPC: 处理客户端发送消息的 RPC 调用
+		// 这是正确的使用方式：客户端通过 RPC 发消息，服务端执行"先落盘再推送"
+		client.OnRPC(func(e centrifuge.RPCEvent, cb centrifuge.RPCCallback) {
+			switch e.Method {
+			case "send.topic":
+				handleSendTopic(ctx, broker, historyStore, tp, client, e, cb)
+			default:
+				cb(centrifuge.RPCReply{}, centrifuge.ErrorMethodNotFound)
 			}
-			cb(centrifuge.PublishReply{}, nil)
 		})
 	})
 
@@ -267,9 +223,10 @@ func main() {
 	}
 	time.Sleep(200 * time.Millisecond)
 
-	testChannels := []string{"live:group-1", "live:channel-1", "live:channel-2"}
+	// 订阅 Live 频道
+	liveChannels := []string{"live:group-1", "live:channel-1", "live:channel-2"}
 	for _, dc := range clients {
-		for _, ch := range testChannels {
+		for _, ch := range liveChannels {
 			if err := dc.subscribe(ctx, ch); err != nil {
 				log.Printf("  %s subscribe %s: %v", dc.id, ch, err)
 			}
@@ -277,10 +234,14 @@ func main() {
 	}
 	time.Sleep(200 * time.Millisecond)
 
+	// ========================================================================
+	// Test 1: Live 消息（实时，不持久化）
+	// ========================================================================
 	log.Println("=== Test 1: Live messages (real-time, non-persisted) ===")
-	liveMsg1 := fmt.Sprintf(`{"text": "live message on group-1","ts":"%s"}`, time.Now().Format(time.RFC3339Nano))
-	liveMsg2 := fmt.Sprintf(`{"text": "live message on channel-1","ts":"%s"}`, time.Now().Format(time.RFC3339Nano))
-	liveMsg3 := fmt.Sprintf(`{"text": "live message on channel-2","ts":"%s"}`, time.Now().Format(time.RFC3339Nano))
+	// Live 消息使用 broker.PublishEphemeral 直接推送（模拟服务端主动推送场景）
+	liveMsg1 := fmt.Sprintf(`{"text":"live message on group-1","ts":"%s"}`, time.Now().Format(time.RFC3339Nano))
+	liveMsg2 := fmt.Sprintf(`{"text":"live message on channel-1","ts":"%s"}`, time.Now().Format(time.RFC3339Nano))
+	liveMsg3 := fmt.Sprintf(`{"text":"live message on channel-2","ts":"%s"}`, time.Now().Format(time.RFC3339Nano))
 
 	for _, dc := range clients {
 		dc.clearMessages("live:group-1")
@@ -288,25 +249,32 @@ func main() {
 		dc.clearMessages("live:channel-2")
 	}
 
-	_ = clients[0].publish(ctx, "live:group-1", liveMsg1)
-	_ = clients[0].publish(ctx, "live:channel-1", liveMsg2)
-	_ = clients[0].publish(ctx, "live:channel-2", liveMsg3)
+	// 服务端直接通过 broker 推送 Live 消息
+	_ = broker.PublishEphemeral(ctx, "live:group-1", []byte(liveMsg1), centrifuge.PublishOptions{})
+	_ = broker.PublishEphemeral(ctx, "live:channel-1", []byte(liveMsg2), centrifuge.PublishOptions{})
+	_ = broker.PublishEphemeral(ctx, "live:channel-2", []byte(liveMsg3), centrifuge.PublishOptions{})
 	time.Sleep(500 * time.Millisecond)
 
+	test1Pass := true
 	for _, dc := range clients {
-		for _, ch := range testChannels {
+		for _, ch := range liveChannels {
 			msgs := dc.receivedMessages(ch)
 			if len(msgs) < 1 {
 				log.Printf("  FAIL: %s did not receive message on %s", dc.id, ch)
-				overallPass = false
+				test1Pass = false
 			}
 		}
 	}
-	if overallPass {
+	if test1Pass {
 		log.Println("  PASS: All clients received all live messages")
+	} else {
+		overallPass = false
 	}
 
-	log.Println("=== Test 2: Topic messages (persisted + real-time) ===")
+	// ========================================================================
+	// Test 2: Topic 消息（通过 RPC 发送，先落盘再推送）
+	// ========================================================================
+	log.Println("=== Test 2: Topic messages (RPC + persist first, then push) ===")
 	topicChannels := []string{"topic:group-1", "topic:channel-1", "topic:channel-2"}
 	for _, dc := range clients {
 		for _, ch := range topicChannels {
@@ -323,41 +291,43 @@ func main() {
 		}
 	}
 
-	// [redis-check] Before publish: verify clean state
 	log.Println("  [redis-check] BEFORE topic publish:")
 	for _, ch := range topicChannels {
 		rc.checkMetaExists(ctx, ch)
 	}
 
+	// 通过 RPC 发送 Topic 消息（客户端 → 服务端 RPC handler → BatchIncrby → 持久化 → PublishWithOffset）
 	for _, ch := range topicChannels {
-		msg := fmt.Sprintf(`{"text": "topic message on %s","ts":"%s"}`, ch, time.Now().Format(time.RFC3339Nano))
-		_ = clients[0].publish(ctx, ch, msg)
+		msg := fmt.Sprintf(`{"text":"topic message on %s","ts":"%s"}`, ch, time.Now().Format(time.RFC3339Nano))
+		if err := clients[0].sendTopicRPC(ctx, ch, msg); err != nil {
+			log.Printf("  FAIL: sendTopicRPC %s: %v", ch, err)
+			overallPass = false
+		}
 	}
 	time.Sleep(2 * time.Second)
 
-	// [redis-check] After publish: verify meta created
 	log.Println("  [redis-check] AFTER topic publish:")
 	for _, ch := range topicChannels {
 		rc.checkMetaExists(ctx, ch)
 	}
 
-	allPass := true
+	test2Pass := true
 	for _, dc := range clients {
 		for _, ch := range topicChannels {
 			msgs := dc.receivedMessages(ch)
 			if len(msgs) < 1 {
 				log.Printf("  FAIL: %s did not receive topic message on %s", dc.id, ch)
-				allPass = false
+				test2Pass = false
 			}
 		}
 	}
-	if allPass {
+	if test2Pass {
 		log.Println("  PASS: All clients received all topic messages")
 	} else {
 		overallPass = false
 	}
 
-	// Verify history via HistoryStore
+	// 验证 HistoryStore
 	topicStoreOK := true
 	for _, ch := range topicChannels {
 		pubs, err := historyStore.Query(context.Background(), ch, 0, 0)
@@ -377,6 +347,9 @@ func main() {
 		overallPass = false
 	}
 
+	// ========================================================================
+	// Test 3: 离线恢复
+	// ========================================================================
 	log.Println("=== Test 3: Offline recovery ===")
 	offlineClient := clients[3]
 	log.Printf("Disconnecting %s...", offlineClient.id)
@@ -392,13 +365,13 @@ func main() {
 		offlineClient.clearMessages(ch)
 	}
 
+	// 发送离线消息
 	for _, ch := range topicChannels {
-		msg := fmt.Sprintf(`{"text": "offline message on %s","ts":"%s"}`, ch, time.Now().Format(time.RFC3339Nano))
-		_ = clients[0].publish(ctx, ch, msg)
+		msg := fmt.Sprintf(`{"text":"offline message on %s","ts":"%s"}`, ch, time.Now().Format(time.RFC3339Nano))
+		_ = clients[0].sendTopicRPC(ctx, ch, msg)
 	}
 	time.Sleep(3 * time.Second)
 
-	// [redis-check] After offline messages
 	log.Println("  [redis-check] AFTER offline message processing:")
 	for _, ch := range topicChannels {
 		rc.checkMetaExists(ctx, ch)
@@ -408,7 +381,6 @@ func main() {
 	if err := offlineClient.connect(ctx); err != nil {
 		log.Printf("  reconnect %s: %v", offlineClient.id, err)
 	}
-	// Re-subscribe using cached Subscription objects (which track last offset for recovery)
 	if err := offlineClient.reSubscribeAll(ctx); err != nil {
 		log.Printf("  re-subscribe %s: %v", offlineClient.id, err)
 	}
@@ -426,7 +398,7 @@ func main() {
 		overallPass = false
 	}
 
-	// Verify offline messages were persisted to history store (now each topic channel has 2 publications)
+	// 验证离线消息持久化
 	offlineStoreOK := true
 	for _, ch := range topicChannels {
 		pubs, err := historyStore.Query(context.Background(), ch, 0, 0)
@@ -446,6 +418,9 @@ func main() {
 		overallPass = false
 	}
 
+	// ========================================================================
+	// Test 4: Live 频道流式文本（打字机效果）
+	// ========================================================================
 	log.Println("=== Test 4: Streaming text on Live channels (typewriter effect) ===")
 	streamCh := "live:group-1"
 	for _, dc := range clients {
@@ -455,20 +430,20 @@ func main() {
 	words := []string{"Hello", " ", "world", " ", "this", " ", "is", " ", "streaming", " ", "text"}
 	for _, word := range words {
 		msg := fmt.Sprintf(`{"text": "%s","stream":true}`, word)
-		_ = clients[0].publish(ctx, streamCh, msg)
+		_ = broker.PublishEphemeral(ctx, streamCh, []byte(msg), centrifuge.PublishOptions{})
 		time.Sleep(50 * time.Millisecond)
 	}
 	time.Sleep(300 * time.Millisecond)
 
-	allPass = true
+	test4Pass := true
 	for _, dc := range clients {
 		msgs := dc.receivedMessages(streamCh)
 		if len(msgs) < len(words) {
 			log.Printf("  FAIL: %s received only %d/%d streaming words", dc.id, len(msgs), len(words))
-			allPass = false
+			test4Pass = false
 		}
 	}
-	if allPass {
+	if test4Pass {
 		log.Println("  PASS: All clients received full streaming text")
 	} else {
 		overallPass = false
@@ -484,6 +459,78 @@ func main() {
 	_ = node.Shutdown(context.Background())
 	_ = broker.Close(context.Background())
 }
+
+// handleSendTopic 处理 "send.topic" RPC：先落盘再推送
+// 模拟 xyncra-server 中 RPC handler 的标准模式
+func handleSendTopic(
+	ctx context.Context,
+	broker *centrifugeplus.DualBroker,
+	historyStore *memoryHistoryStore,
+	tp *sdktrace.TracerProvider,
+	client *centrifuge.Client,
+	e centrifuge.RPCEvent,
+	cb centrifuge.RPCCallback,
+) {
+	var req struct {
+		Channel string `json:"channel"`
+		Data    string `json:"data"`
+	}
+	if err := json.Unmarshal(e.Data, &req); err != nil {
+		cb(centrifuge.RPCReply{}, fmt.Errorf("invalid request: %w", err))
+		return
+	}
+
+	ch := req.Channel
+	if !strings.HasPrefix(ch, "topic:") {
+		cb(centrifuge.RPCReply{}, fmt.Errorf("channel must start with topic: prefix"))
+		return
+	}
+
+	workerTracer := tp.Tracer("example-persist")
+	rpcCtx, span := workerTracer.Start(ctx, "example.send_topic",
+		trace.WithAttributes(attribute.String("channel", ch)),
+	)
+	defer span.End()
+
+	// Step 1: 预分配 offset（Redis HINCRBY）
+	positions, err := broker.BatchIncrby(rpcCtx, []centrifugeplus.ChannelIncrbyRequest{{Channel: ch}})
+	if err != nil {
+		log.Printf("[sendTopic] BatchIncrby error: %v", err)
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		cb(centrifuge.RPCReply{}, fmt.Errorf("batch incrby: %w", err))
+		return
+	}
+	sp := positions[ch]
+	span.SetAttributes(
+		attribute.Int64("offset", int64(sp.Offset)),
+		attribute.String("epoch", sp.Epoch),
+	)
+
+	// Step 2: 持久化到 DB（此处用 memoryHistoryStore 模拟）
+	pub := &centrifuge.Publication{Data: []byte(req.Data)}
+	historyStore.SaveWithOffset(ch, pub, uint32(sp.Offset))
+	log.Printf("[sendTopic] Persisted channel=%s offset=%d", ch, sp.Offset)
+
+	// Step 3: 推送到 PUB/SUB（best-effort，失败不影响数据一致性）
+	if err := broker.PublishWithOffset(rpcCtx, ch, []byte(req.Data), centrifuge.PublishOptions{
+		HistorySize: 100,
+		HistoryTTL:  24 * time.Hour,
+	}, sp); err != nil {
+		log.Printf("[sendTopic] PublishWithOffset error: %v", err)
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		// 推送失败但数据已持久化，客户端可通过主动拉取发现
+	}
+
+	cb(centrifuge.RPCReply{
+		Data: []byte(fmt.Sprintf(`{"offset":%d}`, sp.Offset)),
+	}, nil)
+}
+
+// ============================================================================
+// 客户端辅助类型
+// ============================================================================
 
 type deviceClient struct {
 	id       string
@@ -535,8 +582,13 @@ func (c *deviceClient) subscribe(ctx context.Context, channel string) error {
 	return nil
 }
 
-func (c *deviceClient) publish(ctx context.Context, channel string, text string) error {
-	_, err := c.client.Publish(ctx, channel, []byte(text))
+// sendTopicRPC 通过 RPC 发送 Topic 消息
+func (c *deviceClient) sendTopicRPC(ctx context.Context, channel string, data string) error {
+	req, _ := json.Marshal(map[string]string{
+		"channel": channel,
+		"data":    data,
+	})
+	_, err := c.client.RPC(ctx, "send.topic", req)
 	return err
 }
 
@@ -578,6 +630,10 @@ func (c *deviceClient) close() {
 	c.client.Close()
 }
 
+// ============================================================================
+// MemoryHistoryStore（模拟 DB）
+// ============================================================================
+
 type memoryHistoryStore struct {
 	mu      sync.RWMutex
 	data    map[string][]*centrifuge.Publication
@@ -614,17 +670,6 @@ func (s *memoryHistoryStore) RemoveHistory(channel string) error {
 	return nil
 }
 
-func (s *memoryHistoryStore) Save(channel string, pub *centrifuge.Publication) uint32 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.offsets[channel]++
-	nextOffset := s.offsets[channel]
-	pub.Offset = uint64(nextOffset)
-	s.data[channel] = append(s.data[channel], pub)
-	return nextOffset
-}
-
-// SaveWithOffset saves a publication with a specific offset (from BatchIncrby).
 func (s *memoryHistoryStore) SaveWithOffset(channel string, pub *centrifuge.Publication, offset uint32) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -633,7 +678,10 @@ func (s *memoryHistoryStore) SaveWithOffset(channel string, pub *centrifuge.Publ
 	s.offsets[channel] = offset
 }
 
-// redisChecker validates Redis state at key operation checkpoints.
+// ============================================================================
+// Redis checker（调试辅助）
+// ============================================================================
+
 type redisChecker struct {
 	client rueidis.Client
 	prefix string
