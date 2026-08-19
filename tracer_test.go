@@ -213,7 +213,7 @@ func TestTracingConfig_NilProviderReturnsNoop(t *testing.T) {
 
 // ========== recordError 测试 ==========
 
-func TestRecordError_WithError(t *testing.T) {
+func TestRecordError_WithError(_ *testing.T) {
 	// 使用 noop tracer，确保不 panic
 	tp := noop.NewTracerProvider()
 	tracer := tp.Tracer("test")
@@ -225,7 +225,7 @@ func TestRecordError_WithError(t *testing.T) {
 	span.End()
 }
 
-func TestRecordError_NilError(t *testing.T) {
+func TestRecordError_NilError(_ *testing.T) {
 	tp := noop.NewTracerProvider()
 	tracer := tp.Tracer("test")
 	_, span := tracer.Start(context.Background(), "test-op")

@@ -37,11 +37,11 @@ func TestDualBroker_PublishEphemeral(t *testing.T) {
 			Shards: []*centrifuge.RedisShard{redisShard},
 		},
 		Topic: TopicBrokerConfig{
-			Prefix:       "test-ephemeral-topic",
-			RedisAddr:    "localhost:6379",
+			Prefix:        "test-ephemeral-topic",
+			RedisAddr:     "localhost:6379",
 			RedisPassword: "",
-			RedisDB:      15,
-			HistoryStore: historyStore,
+			RedisDB:       15,
+			HistoryStore:  historyStore,
 		},
 	}
 

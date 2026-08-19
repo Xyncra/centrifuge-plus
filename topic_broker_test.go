@@ -30,7 +30,7 @@ func TestTopicBroker_RegisterBrokerEventHandler_ConcurrentRead(t *testing.T) {
 
 	for i := range numGoroutines {
 		wg.Add(1)
-		go func(idx int) {
+		go func(_ int) {
 			defer wg.Done()
 			eh := &testEventHandler{}
 			_ = broker.RegisterBrokerEventHandler(eh)
@@ -68,7 +68,7 @@ func TestTopicBroker_RegisterBrokerEventHandler_ConcurrentRegisterAndPubSub(t *t
 	// 并发注册 handler
 	for i := range numGoroutines {
 		wg.Add(1)
-		go func(idx int) {
+		go func(_ int) {
 			defer wg.Done()
 			eh := &testEventHandler{}
 			_ = broker.RegisterBrokerEventHandler(eh)
@@ -271,21 +271,21 @@ type recordingEventHandler struct {
 	leaves       []*centrifuge.ClientInfo
 }
 
-func (r *recordingEventHandler) HandlePublication(ch string, pub *centrifuge.Publication, sp centrifuge.StreamPosition, useDelta bool, prevPub *centrifuge.Publication) error {
+func (r *recordingEventHandler) HandlePublication(_ string, pub *centrifuge.Publication, _ centrifuge.StreamPosition, _ bool, _ *centrifuge.Publication) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.publications = append(r.publications, pub)
 	return nil
 }
 
-func (r *recordingEventHandler) HandleJoin(ch string, info *centrifuge.ClientInfo) error {
+func (r *recordingEventHandler) HandleJoin(_ string, info *centrifuge.ClientInfo) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.joins = append(r.joins, info)
 	return nil
 }
 
-func (r *recordingEventHandler) HandleLeave(ch string, info *centrifuge.ClientInfo) error {
+func (r *recordingEventHandler) HandleLeave(_ string, info *centrifuge.ClientInfo) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.leaves = append(r.leaves, info)
@@ -501,17 +501,17 @@ type channelCapturingHandler struct {
 	capturedChannel string
 }
 
-func (h *channelCapturingHandler) HandlePublication(ch string, pub *centrifuge.Publication, sp centrifuge.StreamPosition, useDelta bool, prevPub *centrifuge.Publication) error {
+func (h *channelCapturingHandler) HandlePublication(ch string, _ *centrifuge.Publication, _ centrifuge.StreamPosition, _ bool, _ *centrifuge.Publication) error {
 	h.capturedChannel = ch
 	return nil
 }
 
-func (h *channelCapturingHandler) HandleJoin(ch string, info *centrifuge.ClientInfo) error {
+func (h *channelCapturingHandler) HandleJoin(ch string, _ *centrifuge.ClientInfo) error {
 	h.capturedChannel = ch
 	return nil
 }
 
-func (h *channelCapturingHandler) HandleLeave(ch string, info *centrifuge.ClientInfo) error {
+func (h *channelCapturingHandler) HandleLeave(ch string, _ *centrifuge.ClientInfo) error {
 	h.capturedChannel = ch
 	return nil
 }

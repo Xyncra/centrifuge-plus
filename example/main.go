@@ -1,3 +1,4 @@
+// Package main 提供 centrifuge-plus 的示例应用，演示 TopicBroker 的使用方式。
 package main
 
 import (
@@ -130,7 +131,7 @@ func main() {
 	}
 
 	// 认证：使用 client ID 作为 user ID
-	node.OnConnecting(func(ctx context.Context, e centrifuge.ConnectEvent) (centrifuge.ConnectReply, error) {
+	node.OnConnecting(func(_ context.Context, e centrifuge.ConnectEvent) (centrifuge.ConnectReply, error) {
 		userID := e.Token
 		if userID == "" {
 			userID = e.ClientID
@@ -182,12 +183,12 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("/connection/websocket", wsHandler)
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
 
-	httpServer := &http.Server{Addr: httpAddr, Handler: mux}
+	httpServer := &http.Server{Addr: httpAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		log.Printf("HTTP server on %s", httpAddr)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
@@ -467,7 +468,7 @@ func handleSendTopic(
 	broker *centrifugeplus.DualBroker,
 	historyStore *memoryHistoryStore,
 	tp *sdktrace.TracerProvider,
-	client *centrifuge.Client,
+	_ *centrifuge.Client,
 	e centrifuge.RPCEvent,
 	cb centrifuge.RPCCallback,
 ) {
@@ -503,13 +504,13 @@ func handleSendTopic(
 	}
 	sp := positions[ch]
 	span.SetAttributes(
-		attribute.Int64("offset", int64(sp.Offset)),
+		attribute.Int64("offset", int64(sp.Offset)), //nolint:gosec // offset 不会超过 int64 范围
 		attribute.String("epoch", sp.Epoch),
 	)
 
 	// Step 2: 持久化到 DB（此处用 memoryHistoryStore 模拟）
 	pub := &centrifuge.Publication{Data: []byte(req.Data)}
-	historyStore.SaveWithOffset(ch, pub, uint32(sp.Offset))
+	historyStore.SaveWithOffset(ch, pub, uint32(sp.Offset)) //nolint:gosec // offset 不会超过 uint32 范围
 	log.Printf("[sendTopic] Persisted channel=%s offset=%d", ch, sp.Offset)
 
 	// Step 3: 推送到 PUB/SUB（best-effort，失败不影响数据一致性）
@@ -524,7 +525,7 @@ func handleSendTopic(
 	}
 
 	cb(centrifuge.RPCReply{
-		Data: []byte(fmt.Sprintf(`{"offset":%d}`, sp.Offset)),
+		Data: fmt.Appendf(nil, `{"offset":%d}`, sp.Offset),
 	}, nil)
 }
 
@@ -552,11 +553,11 @@ func newDeviceClient(id string, endpoint string) (*deviceClient, error) {
 	}, nil
 }
 
-func (c *deviceClient) connect(ctx context.Context) error {
+func (c *deviceClient) connect(_ context.Context) error {
 	return c.client.Connect()
 }
 
-func (c *deviceClient) subscribe(ctx context.Context, channel string) error {
+func (c *deviceClient) subscribe(_ context.Context, channel string) error {
 	c.mu.Lock()
 	if _, ok := c.subs[channel]; ok {
 		c.mu.Unlock()
@@ -604,7 +605,7 @@ func (c *deviceClient) receivedMessages(channel string) []string {
 	return result
 }
 
-func (c *deviceClient) reSubscribeAll(ctx context.Context) error {
+func (c *deviceClient) reSubscribeAll(_ context.Context) error {
 	c.mu.Lock()
 	subs := make([]*centrifugego.Subscription, 0, len(c.subs))
 	for _, sub := range c.subs {
@@ -647,7 +648,7 @@ func newMemoryHistoryStore() *memoryHistoryStore {
 	}
 }
 
-func (s *memoryHistoryStore) Query(_ context.Context, channel string, sinceOffset uint32, latestOffset uint32) ([]*centrifuge.Publication, error) {
+func (s *memoryHistoryStore) Query(_ context.Context, channel string, sinceOffset uint32, _ uint32) ([]*centrifuge.Publication, error) {
 	// latestOffset 在生产环境中用于补齐尾部缺口（fillGapPublications），
 	// 保证恢复结果满足 centrifuge 的连续性检查（末条 pub.Offset == latestOffset）。
 	// 示例程序是简化实现，未使用该参数。

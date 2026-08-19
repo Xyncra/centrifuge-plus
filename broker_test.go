@@ -1,3 +1,4 @@
+// Package centrifugeplus 提供 centrifuge-plus 的单元测试。
 package centrifugeplus
 
 import (
@@ -84,11 +85,11 @@ func TestTopicBroker_Publish(t *testing.T) {
 	historyStore := newTestHistoryStore()
 
 	config := TopicBrokerConfig{
-		Prefix:       "test-topic",
-		RedisAddr:    "localhost:6379",
+		Prefix:        "test-topic",
+		RedisAddr:     "localhost:6379",
 		RedisPassword: "",
-		RedisDB:      15,
-		HistoryStore: historyStore,
+		RedisDB:       15,
+		HistoryStore:  historyStore,
 	}
 
 	broker, err := NewTopicBroker(config)
@@ -142,11 +143,11 @@ func TestTopicBroker_PublishIdempotent(t *testing.T) {
 	historyStore := newTestHistoryStore()
 
 	config := TopicBrokerConfig{
-		Prefix:       "test-topic-idempotent",
-		RedisAddr:    "localhost:6379",
+		Prefix:        "test-topic-idempotent",
+		RedisAddr:     "localhost:6379",
 		RedisPassword: "",
-		RedisDB:      15,
-		HistoryStore: historyStore,
+		RedisDB:       15,
+		HistoryStore:  historyStore,
 	}
 
 	broker, err := NewTopicBroker(config)
@@ -206,11 +207,11 @@ func TestTopicBroker_History(t *testing.T) {
 	historyStore := newTestHistoryStore()
 
 	config := TopicBrokerConfig{
-		Prefix:       "test-topic-history",
-		RedisAddr:    "localhost:6379",
+		Prefix:        "test-topic-history",
+		RedisAddr:     "localhost:6379",
 		RedisPassword: "",
-		RedisDB:      15,
-		HistoryStore: historyStore,
+		RedisDB:       15,
+		HistoryStore:  historyStore,
 	}
 
 	broker, err := NewTopicBroker(config)
@@ -226,7 +227,7 @@ func TestTopicBroker_History(t *testing.T) {
 
 	// Publish messages to allocate offsets
 	for i := 0; i < 5; i++ {
-		data := []byte(fmt.Sprintf(`{"message": "message %d"}`, i))
+		data := fmt.Appendf(nil, `{"message": "message %d"}`, i)
 		opts := centrifuge.PublishOptions{
 			HistorySize: 10,
 			HistoryTTL:  time.Hour,
@@ -240,7 +241,7 @@ func TestTopicBroker_History(t *testing.T) {
 	// Add messages to history store (simulating DB persistence)
 	for i := 0; i < 5; i++ {
 		pub := &centrifuge.Publication{
-			Data: []byte(fmt.Sprintf(`{"message": "message %d"}`, i)),
+			Data: fmt.Appendf(nil, `{"message": "message %d"}`, i),
 		}
 		historyStore.Save("test-channel", pub)
 	}
@@ -296,7 +297,7 @@ func TestTopicBroker_HistoryNilStore(t *testing.T) {
 
 	// Publish messages to allocate offsets
 	for i := 1; i <= 3; i++ {
-		data := []byte(fmt.Sprintf(`{"seq":%d}`, i))
+		data := fmt.Appendf(nil, `{"seq":%d}`, i)
 		opts := centrifuge.PublishOptions{
 			HistorySize: 10,
 			HistoryTTL:  time.Hour,
@@ -339,7 +340,7 @@ func TestTopicBroker_HistoryWithFilterSince(t *testing.T) {
 
 	// Publish 5 messages
 	for i := 0; i < 5; i++ {
-		data := []byte(fmt.Sprintf(`{"seq":%d}`, i+1))
+		data := fmt.Appendf(nil, `{"seq":%d}`, i+1)
 		opts := centrifuge.PublishOptions{
 			HistorySize: 10,
 			HistoryTTL:  time.Hour,
@@ -353,7 +354,7 @@ func TestTopicBroker_HistoryWithFilterSince(t *testing.T) {
 	// Add to history store
 	for i := 0; i < 5; i++ {
 		pub := &centrifuge.Publication{
-			Data: []byte(fmt.Sprintf(`{"seq":%d}`, i+1)),
+			Data: fmt.Appendf(nil, `{"seq":%d}`, i+1),
 		}
 		historyStore.Save("filter-channel", pub)
 	}
@@ -405,11 +406,11 @@ func TestDualBroker_Routing(t *testing.T) {
 			Shards: []*centrifuge.RedisShard{redisShard},
 		},
 		Topic: TopicBrokerConfig{
-			Prefix:       "test-dual-topic",
-			RedisAddr:    "localhost:6379",
+			Prefix:        "test-dual-topic",
+			RedisAddr:     "localhost:6379",
 			RedisPassword: "",
-			RedisDB:      15,
-			HistoryStore: historyStore,
+			RedisDB:       15,
+			HistoryStore:  historyStore,
 		},
 	}
 
@@ -499,11 +500,11 @@ func TestTopicBroker_PublishMultipleChannels(t *testing.T) {
 	historyStore := newTestHistoryStore()
 
 	config := TopicBrokerConfig{
-		Prefix:       "test-topic-multi",
-		RedisAddr:    "localhost:6379",
+		Prefix:        "test-topic-multi",
+		RedisAddr:     "localhost:6379",
 		RedisPassword: "",
-		RedisDB:      15,
-		HistoryStore: historyStore,
+		RedisDB:       15,
+		HistoryStore:  historyStore,
 	}
 
 	broker, err := NewTopicBroker(config)
@@ -519,7 +520,7 @@ func TestTopicBroker_PublishMultipleChannels(t *testing.T) {
 
 	channels := []string{"channel-1", "channel-2", "channel-3"}
 	for _, ch := range channels {
-		data := []byte(fmt.Sprintf(`{"message": "message for %s"}`, ch))
+		data := fmt.Appendf(nil, `{"message": "message for %s"}`, ch)
 		opts := centrifuge.PublishOptions{
 			HistorySize: 10,
 			HistoryTTL:  time.Hour,
@@ -552,11 +553,11 @@ func TestTopicBroker_PublishEmptyData(t *testing.T) {
 	historyStore := newTestHistoryStore()
 
 	config := TopicBrokerConfig{
-		Prefix:       "test-topic-empty",
-		RedisAddr:    "localhost:6379",
+		Prefix:        "test-topic-empty",
+		RedisAddr:     "localhost:6379",
 		RedisPassword: "",
-		RedisDB:      15,
-		HistoryStore: historyStore,
+		RedisDB:       15,
+		HistoryStore:  historyStore,
 	}
 
 	broker, err := NewTopicBroker(config)
@@ -602,11 +603,11 @@ func TestTopicBroker_PublishWithIdempotencyKeyTests(t *testing.T) {
 	historyStore := newTestHistoryStore()
 
 	config := TopicBrokerConfig{
-		Prefix:       "test-topic-idempotency",
-		RedisAddr:    "localhost:6379",
+		Prefix:        "test-topic-idempotency",
+		RedisAddr:     "localhost:6379",
 		RedisPassword: "",
-		RedisDB:      15,
-		HistoryStore: historyStore,
+		RedisDB:       15,
+		HistoryStore:  historyStore,
 	}
 
 	broker, err := NewTopicBroker(config)
@@ -664,11 +665,11 @@ func TestTopicBroker_RemoveHistory(t *testing.T) {
 	historyStore := newTestHistoryStore()
 
 	config := TopicBrokerConfig{
-		Prefix:       "test-topic-remove",
-		RedisAddr:    "localhost:6379",
+		Prefix:        "test-topic-remove",
+		RedisAddr:     "localhost:6379",
 		RedisPassword: "",
-		RedisDB:      15,
-		HistoryStore: historyStore,
+		RedisDB:       15,
+		HistoryStore:  historyStore,
 	}
 
 	broker, err := NewTopicBroker(config)
@@ -683,7 +684,7 @@ func TestTopicBroker_RemoveHistory(t *testing.T) {
 	}
 
 	for i := 0; i < 3; i++ {
-		data := []byte(fmt.Sprintf(`{"message": "message %d"}`, i))
+		data := fmt.Appendf(nil, `{"message": "message %d"}`, i)
 		opts := centrifuge.PublishOptions{
 			HistorySize: 10,
 			HistoryTTL:  time.Hour,
@@ -716,11 +717,11 @@ func TestTopicBroker_PublishConcurrent(t *testing.T) {
 	historyStore := newTestHistoryStore()
 
 	config := TopicBrokerConfig{
-		Prefix:       "test-topic-concurrent",
-		RedisAddr:    "localhost:6379",
+		Prefix:        "test-topic-concurrent",
+		RedisAddr:     "localhost:6379",
 		RedisPassword: "",
-		RedisDB:      15,
-		HistoryStore: historyStore,
+		RedisDB:       15,
+		HistoryStore:  historyStore,
 	}
 
 	broker, err := NewTopicBroker(config)
@@ -742,7 +743,7 @@ func TestTopicBroker_PublishConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			data := []byte(fmt.Sprintf(`{"message": "concurrent message %d"}`, index))
+			data := fmt.Appendf(nil, `{"message": "concurrent message %d"}`, index)
 			opts := centrifuge.PublishOptions{
 				HistorySize: 10,
 				HistoryTTL:  time.Hour,
@@ -791,11 +792,11 @@ func TestDualBroker_PublishToBothModes(t *testing.T) {
 			Shards: []*centrifuge.RedisShard{redisShard},
 		},
 		Topic: TopicBrokerConfig{
-			Prefix:       "test-dual-both-topic",
-			RedisAddr:    "localhost:6379",
+			Prefix:        "test-dual-both-topic",
+			RedisAddr:     "localhost:6379",
 			RedisPassword: "",
-			RedisDB:      15,
-			HistoryStore: historyStore,
+			RedisDB:       15,
+			HistoryStore:  historyStore,
 		},
 	}
 
@@ -868,11 +869,11 @@ func TestDualBroker_UnregisterChannelType(t *testing.T) {
 			Shards: []*centrifuge.RedisShard{redisShard},
 		},
 		Topic: TopicBrokerConfig{
-			Prefix:       "test-dual-unregistered-topic",
-			RedisAddr:    "localhost:6379",
+			Prefix:        "test-dual-unregistered-topic",
+			RedisAddr:     "localhost:6379",
 			RedisPassword: "",
-			RedisDB:      15,
-			HistoryStore: historyStore,
+			RedisDB:       15,
+			HistoryStore:  historyStore,
 		},
 	}
 
@@ -927,11 +928,11 @@ func TestDualBroker_UnregisteredChannel_AllMethods(t *testing.T) {
 			Shards: []*centrifuge.RedisShard{redisShard},
 		},
 		Topic: TopicBrokerConfig{
-			Prefix:       "test-dual-unreg-all-topic",
-			RedisAddr:    "localhost:6379",
+			Prefix:        "test-dual-unreg-all-topic",
+			RedisAddr:     "localhost:6379",
 			RedisPassword: "",
-			RedisDB:      15,
-			HistoryStore: historyStore,
+			RedisDB:       15,
+			HistoryStore:  historyStore,
 		},
 	}
 
@@ -1198,7 +1199,7 @@ func TestTopicBroker_TableDrivenPublish(t *testing.T) {
 		{
 			name:    "large payload",
 			channel: "ch-6",
-			data:    []byte(fmt.Sprintf(`{"data":"%s"}`, strings.Repeat("x", 5000))),
+			data:    fmt.Appendf(nil, `{"data":"%s"}`, strings.Repeat("x", 5000)),
 		},
 	}
 
@@ -1291,7 +1292,7 @@ func TestTopicBroker_OffsetSequential(t *testing.T) {
 	ch := "offset-seq-channel"
 	prevOffset := uint64(0)
 	for i := 0; i < 20; i++ {
-		data := []byte(fmt.Sprintf(`{"seq":%d}`, i+1))
+		data := fmt.Appendf(nil, `{"seq":%d}`, i+1)
 		opts := centrifuge.PublishOptions{
 			HistorySize: 100,
 			HistoryTTL:  time.Hour,
@@ -1324,7 +1325,7 @@ func TestTopicBroker_OffsetCrossChannelIsolation(t *testing.T) {
 
 	for round := 0; round < 5; round++ {
 		for _, ch := range channels {
-			data := []byte(fmt.Sprintf(`{"round":%d,"ch":"%s"}`, round+1, ch))
+			data := fmt.Appendf(nil, `{"round":%d,"ch":"%s"}`, round+1, ch)
 			opts := centrifuge.PublishOptions{
 				HistorySize: 10,
 				HistoryTTL:  time.Hour,
@@ -1361,7 +1362,7 @@ func TestTopicBroker_PublishLargePayload(t *testing.T) {
 	defer cleanup()
 
 	largeContent := strings.Repeat("ABCDEFGHIJ", 10000) // ~100KB
-	data := []byte(fmt.Sprintf(`{"data":"%s"}`, largeContent))
+	data := fmt.Appendf(nil, `{"data":"%s"}`, largeContent)
 	opts := centrifuge.PublishOptions{
 		HistorySize: 10,
 		HistoryTTL:  time.Hour,
@@ -1453,7 +1454,7 @@ func TestTopicBroker_PublishCrossChannelMetadataIsolation(t *testing.T) {
 
 	channels := []string{"ch-alpha", "ch-beta", "ch-gamma"}
 	for _, ch := range channels {
-		data := []byte(fmt.Sprintf(`{"ch":"%s"}`, ch))
+		data := fmt.Appendf(nil, `{"ch":"%s"}`, ch)
 		opts := centrifuge.PublishOptions{
 			HistorySize: 10,
 			HistoryTTL:  time.Hour,
@@ -2066,7 +2067,7 @@ func TestTopicBroker_PublishEndToEnd(t *testing.T) {
 		if string(pub.Data) != messages[i] {
 			t.Errorf("pub %d: expected %s, got %s", i, messages[i], string(pub.Data))
 		}
-		if pub.Offset != uint64(i+1) {
+		if pub.Offset != uint64(i+1) { //nolint:gosec // 测试代码，i 不会溢出
 			t.Errorf("pub %d: expected offset %d, got %d", i, i+1, pub.Offset)
 		}
 	}
@@ -2137,15 +2138,15 @@ func (s *testHistoryStore) SaveWithOffset(channel string, pub *centrifuge.Public
 
 type testEventHandler struct{}
 
-func (h *testEventHandler) HandlePublication(ch string, pub *centrifuge.Publication, sp centrifuge.StreamPosition, useDelta bool, prevPub *centrifuge.Publication) error {
+func (h *testEventHandler) HandlePublication(_ string, _ *centrifuge.Publication, _ centrifuge.StreamPosition, _ bool, _ *centrifuge.Publication) error {
 	return nil
 }
 
-func (h *testEventHandler) HandleJoin(ch string, info *centrifuge.ClientInfo) error {
+func (h *testEventHandler) HandleJoin(_ string, _ *centrifuge.ClientInfo) error {
 	return nil
 }
 
-func (h *testEventHandler) HandleLeave(ch string, info *centrifuge.ClientInfo) error {
+func (h *testEventHandler) HandleLeave(_ string, _ *centrifuge.ClientInfo) error {
 	return nil
 }
 
@@ -2691,7 +2692,7 @@ func TestTopicBroker_History_NoSince(t *testing.T) {
 
 	// 发布消息
 	for i := 0; i < 3; i++ {
-		data := []byte(fmt.Sprintf(`{"seq":%d}`, i+1))
+		data := fmt.Appendf(nil, `{"seq":%d}`, i+1)
 		_, _, err := broker.Publish("ch-nosince", data, centrifuge.PublishOptions{})
 		if err != nil {
 			t.Fatalf("publish %d: %v", i+1, err)
@@ -2699,7 +2700,7 @@ func TestTopicBroker_History_NoSince(t *testing.T) {
 	}
 	for i := 0; i < 3; i++ {
 		historyStore.Save("ch-nosince", &centrifuge.Publication{
-			Data: []byte(fmt.Sprintf(`{"seq":%d}`, i+1)),
+			Data: fmt.Appendf(nil, `{"seq":%d}`, i+1),
 		})
 	}
 
@@ -2738,10 +2739,10 @@ func TestTopicBroker_PublishWithOffset_IdempotentCustomTTL(t *testing.T) {
 	sp := positions["ch-ttl"]
 
 	opts := centrifuge.PublishOptions{
-		HistorySize:          100,
-		HistoryTTL:           time.Hour,
-		IdempotencyKey:       "ttl-key",
-		IdempotentResultTTL:  10 * time.Second,
+		HistorySize:         100,
+		HistoryTTL:          time.Hour,
+		IdempotencyKey:      "ttl-key",
+		IdempotentResultTTL: 10 * time.Second,
 	}
 
 	err = broker.PublishWithOffset(ctx, "ch-ttl", []byte(`{"msg":1}`), opts, sp)

@@ -135,8 +135,8 @@ func (b *TopicBroker) handlePubSubMessage(msg rueidis.PubSubMessage) {
 	rawPayload := msg.Message
 	ch := msg.Channel
 	prefix := b.prefix + ":pubsub:"
-	if strings.HasPrefix(ch, prefix) {
-		ch = strings.TrimPrefix(ch, prefix)
+	if trimmed, ok := strings.CutPrefix(ch, prefix); ok {
+		ch = trimmed
 	} else {
 		return
 	}
@@ -169,13 +169,11 @@ func (b *TopicBroker) handlePubSubMessage(msg rueidis.PubSubMessage) {
 		// Format: __p1:{offset}:{epoch}:{data_len}__{data}
 		// Use length-prefix to safely separate meta from data (avoids __ conflicts in message content).
 		raw := payload[5:] // skip "__p1:"
-		metaEnd := strings.Index(raw, "__")
-		if metaEnd < 0 {
+		meta, encodedData, ok := strings.Cut(raw, "__")
+		if !ok {
 			b.logger.Warn("pubsub message missing meta/data separator in channel %s", ch)
 			return
 		}
-		meta := raw[:metaEnd]
-		encodedData := raw[metaEnd+2:]
 
 		parts := strings.SplitN(meta, ":", 3)
 		if len(parts) != 3 {
@@ -196,7 +194,7 @@ func (b *TopicBroker) handlePubSubMessage(msg rueidis.PubSubMessage) {
 		data := encodedData[:dataLen]
 
 		span.SetAttributes(
-			AttributeOffset.Int64(int64(offset)),
+			AttributeOffset.Int64(int64(offset)), //nolint:gosec // offset 不会超过 int64 范围
 			AttributeEpoch.String(epoch),
 		)
 
@@ -407,7 +405,7 @@ func (b *TopicBroker) PublishWithOffset(ctx context.Context, ch string, data []b
 	ctx, span := b.tracer.Start(ctx, "centrifugeplus.topicbroker.publish_with_offset",
 		trace.WithAttributes(
 			AttributeChannel.String(ch),
-			AttributeOffset.Int64(int64(sp.Offset)),
+			AttributeOffset.Int64(int64(sp.Offset)), //nolint:gosec // offset 不会超过 int64 范围
 			AttributeEpoch.String(sp.Epoch),
 		),
 	)
@@ -484,7 +482,7 @@ func (b *TopicBroker) PublishWithContext(ctx context.Context, ch string, data []
 	)
 	defer func() {
 		span.SetAttributes(
-			AttributeOffset.Int64(int64(sp.Offset)),
+			AttributeOffset.Int64(int64(sp.Offset)), //nolint:gosec // offset 不会超过 int64 范围
 			AttributeEpoch.String(sp.Epoch),
 			AttributeFromCache.Bool(fromCache),
 		)
@@ -572,7 +570,7 @@ func (b *TopicBroker) History(ch string, opts centrifuge.HistoryOptions) (pubs [
 	defer func() {
 		if sp.Offset > 0 {
 			span.SetAttributes(
-				AttributeOffset.Int64(int64(sp.Offset)),
+				AttributeOffset.Int64(int64(sp.Offset)), //nolint:gosec // offset 不会超过 int64 范围
 				AttributeEpoch.String(sp.Epoch),
 			)
 		}
@@ -586,7 +584,7 @@ func (b *TopicBroker) History(ch string, opts centrifuge.HistoryOptions) (pubs [
 			b.logger.Warn("History sinceOffset %d exceeds uint32 range, clamping to MaxUint32", opts.Filter.Since.Offset)
 			sinceOffset = math.MaxUint32
 		} else {
-			sinceOffset = uint32(opts.Filter.Since.Offset)
+			sinceOffset = uint32(opts.Filter.Since.Offset) //nolint:gosec // 已检查范围
 		}
 	}
 
@@ -598,7 +596,7 @@ func (b *TopicBroker) History(ch string, opts centrifuge.HistoryOptions) (pubs [
 		return nil, sp, nil
 	}
 
-	pubs, err = b.historyStore.Query(ctx, ch, sinceOffset, uint32(sp.Offset))
+	pubs, err = b.historyStore.Query(ctx, ch, sinceOffset, uint32(sp.Offset)) //nolint:gosec // offset 不会超过 uint32 范围
 	if err != nil {
 		b.logger.Warn("HistoryStore.Query failed for channel %s: %v", ch, err)
 		return nil, sp, err
@@ -654,12 +652,12 @@ func (b *TopicBroker) RemoveHistory(ch string) error {
 }
 
 // Close closes the broker and releases resources.
-func (b *TopicBroker) Close(ctx context.Context) error {
+func (b *TopicBroker) Close(_ context.Context) error {
 	b.pubSubMu.Lock()
 	if b.pubSubCancel != nil {
 		b.pubSubCancel()
 	}
-	b.pubSubClient = nil   // 置空防止并发复用
+	b.pubSubClient = nil                      // 置空防止并发复用
 	b.subscribedChans = make(map[string]bool) // 清空订阅状态，确保下次 Subscribe 重新发送 SUBSCRIBE
 	b.pubSubMu.Unlock()
 
@@ -707,7 +705,7 @@ func (b *TopicBroker) IncrConversationOffset(ctx context.Context, conversationID
 	if result > int64(math.MaxUint32) {
 		return 0, fmt.Errorf("conversation offset overflow: %d", result)
 	}
-	return uint32(result), nil
+	return uint32(result), nil //nolint:gosec // 已检查范围
 }
 
 // Ensure TopicBroker implements centrifuge.Broker
